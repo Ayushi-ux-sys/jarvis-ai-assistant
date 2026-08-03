@@ -30,6 +30,13 @@ from PyQt6.QtCore import QObject, pyqtSignal
 
 # --- Custom Modules ---
 from gui import JarvisWebGUI
+from system_controls import (
+    lock_computer,
+    mute_audio,
+    play_youtube_song,
+    set_master_volume,
+    take_screenshot,
+)
 from wake_word import listen_for_wake_word
 
 # Optional OCR
@@ -45,7 +52,6 @@ web_gui = None
 
 
 class SignalBridge(QObject):
-
     status_signal = pyqtSignal(str, str)
     log_signal = pyqtSignal(str)
 
@@ -240,6 +246,11 @@ TOOLS = [
     open_application_or_site,
     save_user_memory,
     recall_user_memories,
+    set_master_volume,
+    mute_audio,
+    play_youtube_song,
+    take_screenshot,
+    lock_computer,
 ]
 
 available_funcs = {
@@ -250,6 +261,11 @@ available_funcs = {
     "open_application_or_site": open_application_or_site,
     "save_user_memory": save_user_memory,
     "recall_user_memories": recall_user_memories,
+    "set_master_volume": set_master_volume,
+    "mute_audio": mute_audio,
+    "play_youtube_song": play_youtube_song,
+    "take_screenshot": take_screenshot,
+    "lock_computer": lock_computer,
 }
 
 # ==========================================
@@ -371,16 +387,18 @@ def execute_command(command: str) -> bool:
 
 
 def run_jarvis_backend():
-    time.sleep(2)
+    time.sleep(3)
     greet_user()
     running = True
     while running:
-        if web_gui:
-            web_gui.update_state("Standby - Say 'Hey Jarvis'", "#00f0ff")
-            # Send system stats update
-            cpu = psutil.cpu_percent()
-            ram = psutil.virtual_memory().percent
-            web_gui.update_system_stats(int(cpu), int(ram))
+        try:
+            if web_gui:
+                web_gui.update_state("Standby - Say 'Hey Jarvis'", "#00f0ff")
+                cpu = psutil.cpu_percent()
+                ram = psutil.virtual_memory().percent
+                web_gui.update_system_stats(int(cpu), int(ram))
+        except Exception:
+            pass
 
         if listen_for_wake_word():
             speak("At your service, Mam.")
