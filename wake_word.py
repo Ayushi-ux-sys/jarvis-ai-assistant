@@ -45,7 +45,7 @@ def listen_for_wake_word() -> bool:
             frames_per_buffer=CHUNK,
         )
 
-        print("\n💤 JARVIS in standby mode... Say 'Hey Jarvis' or 'Alexa'!")
+        print("\n💤 JARVIS in standby mode... Listening for wake word...")
 
         while True:
             data = stream.read(CHUNK, exception_on_overflow=False)
@@ -55,8 +55,11 @@ def listen_for_wake_word() -> bool:
             prediction = oww_model.predict(audio_frame)
 
             for wake_word, score in prediction.items():
-                if score > 0.5:
-                    print(f"\n⚡ Wake-word detected! [{wake_word}]")
+                # Lower threshold to 0.3 for higher sensitivity
+                if score > 0.3:
+                    print(
+                        f"\n⚡ Wake-word detected! [{wake_word}] Score: {score:.2f}"
+                    )
                     stream.stop_stream()
                     stream.close()
                     audio.terminate()

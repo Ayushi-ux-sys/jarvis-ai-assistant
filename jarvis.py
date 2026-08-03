@@ -4,9 +4,9 @@ import io
 import json
 import os
 import sys
+import threading
 import time
 import webbrowser
-from wake_word import listen_for_wake_word
 
 # --- PyAudio / PyAudioWPatch Fallback for Windows ---
 try:
@@ -25,6 +25,12 @@ import pyttsx3
 import requests
 import speech_recognition as sr
 from duckduckgo_search import DDGS
+from PyQt6.QtCore import QObject, pyqtSignal
+from PyQt6.QtWidgets import QApplication
+
+# --- Custom Modules ---
+from gui import JarvisHUD
+from wake_word import listen_for_wake_word
 
 # Optional fast OCR library for screen reading
 try:
@@ -34,14 +40,19 @@ try:
 except ImportError:
     HAS_OCR = False
 
-# Optional local open-source wake-word detection
-try:
-    import numpy as np
-    from openwakeword.model import Model as OWWModel
+# ==========================================
+# 🛰️ THREAD SIGNAL BRIDGE FOR GUI UPDATES
+# ==========================================
 
-    HAS_WAKEWORD = True
-except ImportError:
-    HAS_WAKEWORD = False
+
+class SignalBridge(QObject):
+    """Bridge to send thread-safe signals from JARVIS agent loop to PyQt GUI."""
+
+    status_signal = pyqtSignal(str, str)  # status_text, color_hex
+    log_signal = pyqtSignal(str)
+
+
+bridge = SignalBridge()
 
 # ==========================================
 # 🧠 LONG-TERM MEMORY SYSTEM
@@ -109,7 +120,7 @@ def build_system_prompt() -> str:
 conversation_history = [{"role": "system", "content": build_system_prompt()}]
 
 # ==========================================
-# 🛠️ AGENT TOOL DEFINITIONS (MUST BE FIRST)
+# 🛠️ AGENT TOOL DEFINITIONS
 # ==========================================
 
 
@@ -141,7 +152,7 @@ def get_live_internet_updates(query: str) -> str:
         if "weather" in query.lower():
             return fetch_live_weather()
 
-        print(f"🌐 Searching web for: {query}...")
+        bridge.log_signal.emit(f"Searching web for: {query}...")
         with DDGS() as ddgs:
             results = list(ddgs.text(query, max_results=3))
             if results:
@@ -280,8 +291,10 @@ available_funcs = {
 
 
 def speak(text: str):
-    """Prints text and speaks out loud."""
-    print(f"\n🤖 JARVIS: {text}")
+    """Prints text, updates GUI log, and speaks out loud."""
+    bridge.status_signal.emit("Speaking...", "#00e676")  # Green Glow
+    bridge.log_signal.emit(f"JARVIS: {text}")
+
     try:
         tts_engine = pyttsx3.init("sapi5")
         tts_engine.setProperty("rate", 185)
@@ -295,6 +308,8 @@ def speak(text: str):
         tts_engine.stop()
     except Exception as e:
         print(f"[Speech Error]: {e}")
+
+    bridge.status_signal.emit("System Standby", "#00d2ff")  # Cyan Glow
 
 
 def greet_user():
@@ -310,59 +325,17 @@ def listen_command() -> str:
     r.dynamic_energy_threshold = True
 
     with sr.Microphone() as source:
-        print("\n🎤 Listening (take your time)...")
+        bridge.status_signal.emit("Listening...", "#ffc107")  # Yellow Glow
+        bridge.log_signal.emit("Listening (take your time)...")
         r.adjust_for_ambient_noise(source, duration=0.4)
         try:
             audio = r.listen(source, timeout=None, phrase_time_limit=None)
-            print("🧠 Processing...")
+            bridge.status_signal.emit("Processing Voice...", "#9c27b0")  # Purple
             query = r.recognize_google(audio, language="en-US")
-            print(f"👤 MAM: {query}")
+            bridge.log_signal.emit(f"Mam: {query}")
             return query.strip()
         except Exception:
             return ""
-
-
-def wait_for_wakeword() -> bool:
-    """Passively listens in the background for a wake-word if openwakeword is installed."""
-    if not HAS_WAKEWORD:
-        return True  # Fallback: directly proceed to active microphone listening
-
-    try:
-        oww_model = OWWModel()
-        FORMAT = pyaudio.paInt16
-        CHANNELS = 1
-        RATE = 16000
-        CHUNK = 1280
-
-        audio = pyaudio.PyAudio()
-        stream = audio.open(
-            format=FORMAT,
-            channels=CHANNELS,
-            rate=RATE,
-            input=True,
-            frames_per_buffer=CHUNK,
-        )
-
-        print("\n💤 JARVIS in standby mode. Say 'Hey Jarvis'...")
-
-        while True:
-            data = stream.read(CHUNK, exception_on_overflow=False)
-            audio_frame = np.frombuffer(data, dtype=np.int16)
-
-            prediction = oww_model.predict(audio_frame)
-
-            for wake_word, score in prediction.items():
-                if score > 0.5:
-                    print(f"⚡ Wake-word detected ({wake_word})!")
-                    speak("At your service.")
-                    stream.stop_stream()
-                    stream.close()
-                    audio.terminate()
-                    return True
-
-    except Exception as e:
-        print(f"[Wake-word Error]: {e}")
-        return True
 
 
 # ==========================================
@@ -376,7 +349,7 @@ def execute_command(command: str) -> bool:
 
     cmd_lower = command.lower()
 
-    # 1. Immediate System Exit Triggers
+    # 1. System Shutdown Triggers
     exit_triggers = [
         "shutdown",
         "exit",
@@ -384,7 +357,7 @@ def execute_command(command: str) -> bool:
         "bye",
         "go to sleep",
         "close yourself",
-        "exit jar",
+        "exit jarvis",
         "quit",
         "terminate",
     ]
@@ -405,7 +378,7 @@ def execute_command(command: str) -> bool:
     # 3. Explicit Screen Inspection
     screen_keywords = ["screen", "look at", "read monitor", "what do you see"]
     if any(kw in cmd_lower for kw in screen_keywords):
-        print("📺 Analyzing screen...")
+        bridge.log_signal.emit("Analyzing screen...")
         screen_summary = capture_screen_and_describe(command)
         clean_summary = (
             screen_summary.replace("*", "").replace("#", "").replace("`", "")
@@ -425,14 +398,14 @@ def execute_command(command: str) -> bool:
 
         msg = response["message"]
 
-        # Handle Native Tool Call
+        # Native Tool Call Handling
         if msg.get("tool_calls"):
             for tool in msg["tool_calls"]:
                 fn_name = tool["function"]["name"]
                 fn_args = tool["function"]["arguments"]
 
                 if fn_name in available_funcs:
-                    print(f"⚙️ Executing Tool: {fn_name}...")
+                    bridge.log_signal.emit(f"Executing Tool: {fn_name}...")
                     tool_output = available_funcs[fn_name](**fn_args)
                     conversation_history.append(
                         {"role": "tool", "content": str(tool_output)}
@@ -453,39 +426,7 @@ def execute_command(command: str) -> bool:
                     speak(clean_reply)
                     return True
 
-        # Handle Raw JSON Fallback
-        raw_content = msg.get("content", "").strip()
-        if raw_content.startswith("{") and "name" in raw_content:
-            try:
-                parsed_tool = json.loads(raw_content)
-                fn_name = parsed_tool.get("name")
-                fn_args = parsed_tool.get("parameters", {})
-
-                if fn_name in available_funcs:
-                    print(f"⚙️ Executing Tool (JSON Fallback): {fn_name}...")
-                    tool_output = available_funcs[fn_name](**fn_args)
-                    conversation_history.append(
-                        {"role": "tool", "content": str(tool_output)}
-                    )
-
-                    second_response = ollama.chat(
-                        model="llama3.2", messages=conversation_history
-                    )
-                    ai_reply = second_response["message"]["content"]
-                    clean_reply = (
-                        ai_reply.replace("*", "")
-                        .replace("#", "")
-                        .replace("`", "")
-                    )
-                    conversation_history.append(
-                        {"role": "assistant", "content": clean_reply}
-                    )
-                    speak(clean_reply)
-                    return True
-            except Exception:
-                pass
-
-        # Standard Speech Answer
+        # Fallback Standard Speech
         ai_reply = msg["content"]
         clean_reply = (
             ai_reply.replace("*", "").replace("#", "").replace("`", "")
@@ -497,24 +438,50 @@ def execute_command(command: str) -> bool:
 
     except Exception as e:
         speak("I encountered an issue with my local neural core.")
-        print(f"[Agent Error]: {e}")
+        bridge.log_signal.emit(f"Agent Error: {e}")
 
     return True
 
 
-def main():
-    print("Initializing JARVIS AI Agent Systems...")
+# ==========================================
+# 🚀 MAIN LAUNCHER & MULTI-THREADING
+# ==========================================
+
+
+def run_jarvis_backend():
+    """Runs the backend agent loop continuously in a secondary background thread."""
+    time.sleep(1)  # Allow GUI to fully initialize
     greet_user()
 
     running = True
     while running:
-        # Wait in passive mode until wake-word is heard
+        bridge.status_signal.emit(
+            "Standby - Say 'Hey Jarvis'", "#00d2ff"
+        )  # Cyan
         if listen_for_wake_word():
             speak("At your service, Mam.")
-
             command = listen_command()
             if command:
                 running = execute_command(command)
+
+
+def main():
+    app = QApplication(sys.argv)
+
+    # Initialize PyQt HUD
+    gui = JarvisHUD()
+
+    # Connect Signals from Backend Thread to GUI Updates
+    bridge.status_signal.connect(gui.update_state)
+    bridge.log_signal.connect(gui.append_log)
+
+    # Launch JARVIS Backend Loop in Background Thread
+    backend_thread = threading.Thread(target=run_jarvis_backend, daemon=True)
+    backend_thread.start()
+
+    gui.show()
+    sys.exit(app.exec())
+
 
 if __name__ == "__main__":
     main()
