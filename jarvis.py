@@ -6,6 +6,7 @@ import os
 import sys
 import time
 import webbrowser
+from wake_word import listen_for_wake_word
 
 # --- PyAudio / PyAudioWPatch Fallback for Windows ---
 try:
@@ -507,11 +508,13 @@ def main():
 
     running = True
     while running:
-        if wait_for_wakeword():
+        # Wait in passive mode until wake-word is heard
+        if listen_for_wake_word():
+            speak("At your service, Mam.")
+
             command = listen_command()
             if command:
                 running = execute_command(command)
-
 
 if __name__ == "__main__":
     main()
