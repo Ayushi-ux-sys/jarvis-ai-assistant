@@ -3,6 +3,7 @@ import time
 
 try:
     import numpy as np
+    import openwakeword
     from openwakeword.model import Model as OWWModel
 
     HAS_OWW = True
@@ -20,13 +21,14 @@ except ImportError:
 def listen_for_wake_word() -> bool:
     """Passively listens in the background using local ONNX models."""
     if not HAS_OWW:
-        print(
-            "⚠️ openwakeword not installed. Falling back to direct listening..."
-        )
+        print("⚠️ openwakeword not installed. Falling back to direct listening...")
         return True
 
     try:
-        # Force inference_framework='onnx' to fix the tflite runtime warning
+        # Download missing models if not present
+        openwakeword.utils.download_models()
+
+        # Load ONNX wake-word model
         oww_model = OWWModel(inference_framework="onnx")
 
         FORMAT = pyaudio.paInt16
