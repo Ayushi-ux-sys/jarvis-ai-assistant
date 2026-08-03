@@ -8,7 +8,7 @@ import threading
 import time
 import webbrowser
 
-# --- PyAudio / PyAudioWPatch Fallback for Windows ---
+# --- PyAudio Fallback ---
 try:
     import pyaudio
 except ImportError:
@@ -16,7 +16,7 @@ except ImportError:
 
     sys.modules["pyaudio"] = pyaudio
 
-# --- Third-Party Dependencies ---
+# --- Dependencies ---
 import ollama
 import psutil
 import pyautogui
@@ -24,15 +24,15 @@ import pyperclip
 import pyttsx3
 import requests
 import speech_recognition as sr
+import webview
 from duckduckgo_search import DDGS
 from PyQt6.QtCore import QObject, pyqtSignal
-from PyQt6.QtWidgets import QApplication
 
 # --- Custom Modules ---
-from gui import JarvisHUD
+from gui import JarvisWebGUI
 from wake_word import listen_for_wake_word
 
-# Optional fast OCR library for screen reading
+# Optional OCR
 try:
     import pytesseract
 
@@ -40,15 +40,13 @@ try:
 except ImportError:
     HAS_OCR = False
 
-# ==========================================
-# 🛰️ THREAD SIGNAL BRIDGE FOR GUI UPDATES
-# ==========================================
+# Global Web GUI Handle
+web_gui = None
 
 
 class SignalBridge(QObject):
-    """Bridge to send thread-safe signals from JARVIS agent loop to PyQt GUI."""
 
-    status_signal = pyqtSignal(str, str)  # status_text, color_hex
+    status_signal = pyqtSignal(str, str)
     log_signal = pyqtSignal(str)
 
 
@@ -62,7 +60,6 @@ MEMORY_FILE = "memory.json"
 
 
 def load_memory() -> dict:
-    """Loads long-term user memories from a local JSON file."""
     if os.path.exists(MEMORY_FILE):
         try:
             with open(MEMORY_FILE, "r") as f:
@@ -73,7 +70,6 @@ def load_memory() -> dict:
 
 
 def save_user_memory(key: str, value: str) -> str:
-    """Saves a key fact or preference to long-term memory."""
     try:
         memories = load_memory()
         clean_key = key.lower().strip().replace(" ", "_")
@@ -86,11 +82,9 @@ def save_user_memory(key: str, value: str) -> str:
 
 
 def recall_user_memories() -> str:
-    """Recalls all saved memories stored about the user."""
     memories = load_memory()
     if not memories:
         return "No long-term memories stored yet."
-
     memory_list = [
         f"- {k.replace('_', ' ').title()}: {v}" for k, v in memories.items()
     ]
@@ -98,7 +92,6 @@ def recall_user_memories() -> str:
 
 
 def build_system_prompt() -> str:
-    """Constructs the base system prompt with long-term memory injected."""
     memories = load_memory()
     memory_context = ""
     if memories:
@@ -125,33 +118,27 @@ conversation_history = [{"role": "system", "content": build_system_prompt()}]
 
 
 def fetch_live_weather() -> str:
-    """Fetches real-time weather dynamically based on current IP location."""
     try:
         ip_data = requests.get("https://ipapi.co/json/", timeout=3).json()
         city = ip_data.get("city")
-
         if city:
             res = requests.get(
                 f"https://wttr.in/{city}?format=%C+%t", timeout=3
             )
             if res.status_code == 200:
                 return f"The weather in {city} is currently {res.text.strip()}."
-
         res = requests.get("https://wttr.in/?format=%C+%t", timeout=3)
         if res.status_code == 200:
             return f"The current local weather is {res.text.strip()}."
-
         return "Unable to retrieve current weather data right now."
     except Exception as e:
         return f"Weather lookup error: {str(e)}"
 
 
 def get_live_internet_updates(query: str) -> str:
-    """Fetches real-time news, sports scores, or live internet data."""
     try:
         if "weather" in query.lower():
             return fetch_live_weather()
-
         bridge.log_signal.emit(f"Searching web for: {query}...")
         with DDGS() as ddgs:
             results = list(ddgs.text(query, max_results=3))
@@ -159,35 +146,28 @@ def get_live_internet_updates(query: str) -> str:
                 snippets = [f"- {r.get('body', '')}" for r in results]
                 return "\n".join(snippets)
             return "No real-time web results found for this request."
-
     except Exception as e:
         return f"Live lookup error: {str(e)}"
 
 
 def get_system_stats() -> str:
-    """Returns current CPU and RAM usage percentages."""
     cpu = psutil.cpu_percent(interval=0.2)
     ram = psutil.virtual_memory().percent
     return f"CPU usage is at {cpu} percent, and RAM usage is at {ram} percent."
 
 
 def close_application(app_name: str) -> str:
-    """Safely closes a running Windows application by process name."""
     app_clean = app_name.lower().strip()
-
     if "code" in app_clean or "jarvis" in app_clean:
         return "I will not close your active development editor, Mam."
-
     executable_map = {
         "chrome": "chrome.exe",
         "browser": "chrome.exe",
         "notepad": "notepad.exe",
         "spotify": "Spotify.exe",
     }
-
     target_exe = executable_map.get(app_clean, f"{app_clean}.exe")
     closed_any = False
-
     for proc in psutil.process_iter(["pid", "name"]):
         try:
             if (
@@ -198,28 +178,21 @@ def close_application(app_name: str) -> str:
                 closed_any = True
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
-
-    if closed_any:
-        return f"Closed {app_name}."
-    else:
-        return f"Could not find {app_name} running."
+    return (
+        f"Closed {app_name}." if closed_any else f"Could not find {app_name}."
+    )
 
 
 def read_copied_code_or_text() -> str:
-    """Reads whatever text or code is copied to the clipboard."""
     text = pyperclip.paste()
-    if text and len(text.strip()) > 0:
-        return f"Clipboard text: {text[:1000]}"
-    return "Clipboard is empty."
+    return f"Clipboard text: {text[:1000]}" if text.strip() else "Clipboard empty."
 
 
 def capture_screen_and_describe(
     prompt: str = "Summarize screen briefly",
 ) -> str:
-    """Explicit tool to extract screen text via OCR."""
     try:
         screenshot = pyautogui.screenshot()
-
         if HAS_OCR:
             screen_text = pytesseract.image_to_string(screenshot)
             if screen_text.strip():
@@ -233,19 +206,17 @@ def capture_screen_and_describe(
                     ],
                 )
                 return response["message"]["content"]
-
         clipboard_text = pyperclip.paste()
         if clipboard_text.strip():
-            return f"Screen text unreadable, clipboard content: {clipboard_text[:300]}"
-
+            return (
+                f"Screen text unreadable, clipboard content: {clipboard_text[:300]}"
+            )
         return "Could not extract readable screen text."
-
     except Exception as e:
         return f"Screen analysis error: {str(e)}"
 
 
 def open_application_or_site(target: str) -> str:
-    """Opens a website or application on the computer."""
     target_clean = target.lower().strip()
     if "youtube" in target_clean:
         webbrowser.open("https://www.youtube.com")
@@ -260,10 +231,6 @@ def open_application_or_site(target: str) -> str:
         webbrowser.open(f"https://www.google.com/search?q={target}")
         return f"Searching Google for {target}."
 
-
-# ==========================================
-# ⚙️ AGENT TOOLS REGISTRATION
-# ==========================================
 
 TOOLS = [
     get_live_internet_updates,
@@ -291,25 +258,20 @@ available_funcs = {
 
 
 def speak(text: str):
-    """Prints text, updates GUI log, and speaks out loud."""
-    bridge.status_signal.emit("Speaking...", "#00e676")  # Green Glow
+    bridge.status_signal.emit("Speaking...", "#00f0ff")
     bridge.log_signal.emit(f"JARVIS: {text}")
-
     try:
         tts_engine = pyttsx3.init("sapi5")
         tts_engine.setProperty("rate", 185)
-
         voices = tts_engine.getProperty("voices")
         if len(voices) > 0:
             tts_engine.setProperty("voice", voices[0].id)
-
         tts_engine.say(text)
         tts_engine.runAndWait()
         tts_engine.stop()
     except Exception as e:
         print(f"[Speech Error]: {e}")
-
-    bridge.status_signal.emit("System Standby", "#00d2ff")  # Cyan Glow
+    bridge.status_signal.emit("Standby - Say 'Hey Jarvis'", "#00f0ff")
 
 
 def greet_user():
@@ -319,18 +281,16 @@ def greet_user():
 
 
 def listen_command() -> str:
-    """Listens dynamically without hard timeouts until the user stops speaking."""
     r = sr.Recognizer()
     r.pause_threshold = 2.0
     r.dynamic_energy_threshold = True
-
     with sr.Microphone() as source:
-        bridge.status_signal.emit("Listening...", "#ffc107")  # Yellow Glow
+        bridge.status_signal.emit("Listening...", "#ffc107")
         bridge.log_signal.emit("Listening (take your time)...")
         r.adjust_for_ambient_noise(source, duration=0.4)
         try:
             audio = r.listen(source, timeout=None, phrase_time_limit=None)
-            bridge.status_signal.emit("Processing Voice...", "#9c27b0")  # Purple
+            bridge.status_signal.emit("Processing Voice...", "#9c27b0")
             query = r.recognize_google(audio, language="en-US")
             bridge.log_signal.emit(f"Mam: {query}")
             return query.strip()
@@ -346,10 +306,7 @@ def listen_command() -> str:
 def execute_command(command: str) -> bool:
     if not command:
         return True
-
     cmd_lower = command.lower()
-
-    # 1. System Shutdown Triggers
     exit_triggers = [
         "shutdown",
         "exit",
@@ -357,16 +314,13 @@ def execute_command(command: str) -> bool:
         "bye",
         "go to sleep",
         "close yourself",
-        "exit jarvis",
         "quit",
-        "terminate",
     ]
     if any(trigger in cmd_lower for trigger in exit_triggers):
         speak("Shutting down core protocols. Have a wonderful day, Mam.")
         time.sleep(0.5)
         return False
 
-    # 2. Weather Direct Shortcut
     if "weather" in cmd_lower:
         weather_reply = fetch_live_weather()
         conversation_history.append(
@@ -375,71 +329,39 @@ def execute_command(command: str) -> bool:
         speak(weather_reply)
         return True
 
-    # 3. Explicit Screen Inspection
-    screen_keywords = ["screen", "look at", "read monitor", "what do you see"]
-    if any(kw in cmd_lower for kw in screen_keywords):
-        bridge.log_signal.emit("Analyzing screen...")
-        screen_summary = capture_screen_and_describe(command)
-        clean_summary = (
-            screen_summary.replace("*", "").replace("#", "").replace("`", "")
-        )
-        speak(clean_summary)
-        return True
-
-    # 4. Ollama Dynamic Processing
     conversation_history.append({"role": "user", "content": command})
-
     try:
         response = ollama.chat(
-            model="llama3.2",
-            messages=conversation_history,
-            tools=TOOLS,
+            model="llama3.2", messages=conversation_history, tools=TOOLS
         )
-
         msg = response["message"]
-
-        # Native Tool Call Handling
         if msg.get("tool_calls"):
             for tool in msg["tool_calls"]:
                 fn_name = tool["function"]["name"]
                 fn_args = tool["function"]["arguments"]
-
                 if fn_name in available_funcs:
                     bridge.log_signal.emit(f"Executing Tool: {fn_name}...")
                     tool_output = available_funcs[fn_name](**fn_args)
                     conversation_history.append(
                         {"role": "tool", "content": str(tool_output)}
                     )
-
                     second_response = ollama.chat(
                         model="llama3.2", messages=conversation_history
                     )
-                    ai_reply = second_response["message"]["content"]
-                    clean_reply = (
-                        ai_reply.replace("*", "")
-                        .replace("#", "")
-                        .replace("`", "")
+                    ai_reply = second_response["message"]["content"].replace(
+                        "*", ""
                     )
                     conversation_history.append(
-                        {"role": "assistant", "content": clean_reply}
+                        {"role": "assistant", "content": ai_reply}
                     )
-                    speak(clean_reply)
+                    speak(ai_reply)
                     return True
-
-        # Fallback Standard Speech
-        ai_reply = msg["content"]
-        clean_reply = (
-            ai_reply.replace("*", "").replace("#", "").replace("`", "")
-        )
-        conversation_history.append(
-            {"role": "assistant", "content": clean_reply}
-        )
-        speak(clean_reply)
-
+        ai_reply = msg["content"].replace("*", "")
+        conversation_history.append({"role": "assistant", "content": ai_reply})
+        speak(ai_reply)
     except Exception as e:
         speak("I encountered an issue with my local neural core.")
         bridge.log_signal.emit(f"Agent Error: {e}")
-
     return True
 
 
@@ -449,15 +371,17 @@ def execute_command(command: str) -> bool:
 
 
 def run_jarvis_backend():
-    """Runs the backend agent loop continuously in a secondary background thread."""
-    time.sleep(1)  # Allow GUI to fully initialize
+    time.sleep(2)
     greet_user()
-
     running = True
     while running:
-        bridge.status_signal.emit(
-            "Standby - Say 'Hey Jarvis'", "#00d2ff"
-        )  # Cyan
+        if web_gui:
+            web_gui.update_state("Standby - Say 'Hey Jarvis'", "#00f0ff")
+            # Send system stats update
+            cpu = psutil.cpu_percent()
+            ram = psutil.virtual_memory().percent
+            web_gui.update_system_stats(int(cpu), int(ram))
+
         if listen_for_wake_word():
             speak("At your service, Mam.")
             command = listen_command()
@@ -466,21 +390,24 @@ def run_jarvis_backend():
 
 
 def main():
-    app = QApplication(sys.argv)
+    global web_gui
+    web_gui = JarvisWebGUI()
 
-    # Initialize PyQt HUD
-    gui = JarvisHUD()
+    def ui_log(msg):
+        if web_gui:
+            web_gui.append_log(msg)
 
-    # Connect Signals from Backend Thread to GUI Updates
-    bridge.status_signal.connect(gui.update_state)
-    bridge.log_signal.connect(gui.append_log)
+    def ui_status(text, color):
+        if web_gui:
+            web_gui.update_state(text, color)
 
-    # Launch JARVIS Backend Loop in Background Thread
+    bridge.log_signal.connect(ui_log)
+    bridge.status_signal.connect(ui_status)
+
     backend_thread = threading.Thread(target=run_jarvis_backend, daemon=True)
     backend_thread.start()
 
-    gui.show()
-    sys.exit(app.exec())
+    webview.start()
 
 
 if __name__ == "__main__":
