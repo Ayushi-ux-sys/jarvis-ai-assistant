@@ -27,7 +27,7 @@ import speech_recognition as sr
 import webview
 from PyQt6.QtCore import QObject, pyqtSignal
 
-# Import DDGS safely across package versions
+# Safely import DDGS across package versions
 try:
     from ddgs import DDGS
 except ImportError:
@@ -35,6 +35,7 @@ except ImportError:
 
 # --- Custom Modules ---
 from gui import JarvisWebGUI
+from hand_tracking import start_hand_tracker
 from system_controls import (
     change_volume_relative,
     launch_application,
@@ -90,7 +91,7 @@ def save_user_memory(key: str, value: str) -> str:
         memories[clean_key] = value
         with open(MEMORY_FILE, "w") as f:
             json.dump(memories, f, indent=4)
-        return f"Stored in long-term memory: {key} = {value}"
+        return f"Stored in memory: {key} = {value}"
     except Exception as e:
         return f"Failed to save memory: {str(e)}"
 
@@ -102,7 +103,7 @@ def recall_user_memories() -> str:
     memory_list = [
         f"- {k.replace('_', ' ').title()}: {v}" for k, v in memories.items()
     ]
-    return "Here is what I remember about you:\n" + "\n".join(memory_list)
+    return "Memories:\n" + "\n".join(memory_list)
 
 
 def build_system_prompt() -> str:
@@ -119,7 +120,7 @@ def build_system_prompt() -> str:
     return (
         "You are JARVIS, an advanced AI assistant. "
         "When answering queries, be direct, polite, and reply in 1-2 concise, spoken conversational sentences. "
-        "Do not use markdown, asterisks, formatting symbols, or print raw JSON tool structures."
+        "Do not use markdown, asterisks, or formatting symbols."
         f"{memory_context}"
     )
 
@@ -173,34 +174,6 @@ def get_system_stats() -> str:
 def read_copied_code_or_text() -> str:
     text = pyperclip.paste()
     return f"Clipboard text: {text[:1000]}" if text.strip() else "Clipboard empty."
-
-
-def capture_screen_and_describe(
-    prompt: str = "Summarize screen briefly",
-) -> str:
-    try:
-        screenshot = pyautogui.screenshot()
-        if HAS_OCR:
-            screen_text = pytesseract.image_to_string(screenshot)
-            if screen_text.strip():
-                response = ollama.chat(
-                    model="llama3.2",
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": f"{prompt}. Screen text:\n\n{screen_text[:1000]}",
-                        }
-                    ],
-                )
-                return response["message"]["content"]
-        clipboard_text = pyperclip.paste()
-        if clipboard_text.strip():
-            return (
-                f"Screen text unreadable, clipboard content: {clipboard_text[:300]}"
-            )
-        return "Could not extract readable screen text."
-    except Exception as e:
-        return f"Screen analysis error: {str(e)}"
 
 
 TOOLS = [
@@ -259,24 +232,66 @@ def speak(text: str):
 def greet_user():
     greeting = "Systems online, Mam. How can I assist you?"
     conversation_history.append({"role": "assistant", "content": greeting})
+    if web_gui:
+        web_gui.update_thinking(
+            prompt="System Boot", step="Core initialization complete."
+        )
     speak(greeting)
 
 
 def listen_command() -> str:
     r = sr.Recognizer()
-    r.pause_threshold = 1.5
+    r.pause_threshold = 1.2
+    r.energy_threshold = 300
     r.dynamic_energy_threshold = True
+
     with sr.Microphone() as source:
-        bridge.status_signal.emit("Listening...", "#ffc107")
-        bridge.log_signal.emit("Listening...")
+        bridge.status_signal.emit("Listening for Query...", "#ffc107")
+        if web_gui:
+            web_gui.update_thinking(
+                prompt="[AWAITING VOICE INPUT]",
+                step="Microphone active. Please speak your question...",
+            )
+
         r.adjust_for_ambient_noise(source, duration=0.3)
+
         try:
-            audio = r.listen(source, timeout=5.0, phrase_time_limit=10.0)
-            bridge.status_signal.emit("Processing...", "#9c27b0")
-            query = r.recognize_google(audio, language="en-US")
-            bridge.log_signal.emit(f"User: {query}")
-            return query.strip()
-        except Exception:
+            audio = r.listen(source, timeout=8.0, phrase_time_limit=12.0)
+            bridge.status_signal.emit("Converting Voice to Text...", "#9c27b0")
+
+            if web_gui:
+                web_gui.update_thinking(
+                    prompt="[PROCESSING AUDIO]",
+                    step="Sending audio stream to Speech-to-Text engine...",
+                )
+
+            query = r.recognize_google(audio, language="en-US").strip()
+
+            if query and web_gui:
+                web_gui.append_log(f"User Spoke: {query}")
+                web_gui.update_thinking(
+                    prompt=query,
+                    step="Voice-to-Text successful! Analyzing prompt intent...",
+                )
+
+            return query
+
+        except sr.WaitTimeoutError:
+            if web_gui:
+                web_gui.update_thinking(
+                    prompt="[NO SPEECH DETECTED]",
+                    step="Listening timed out waiting for input.",
+                )
+            return ""
+        except sr.UnknownValueError:
+            if web_gui:
+                web_gui.update_thinking(
+                    prompt="[UNRECOGNIZED AUDIO]",
+                    step="Could not parse speech clearly.",
+                )
+            return ""
+        except Exception as e:
+            bridge.log_signal.emit(f"Audio Capture Error: {e}")
             return ""
 
 
@@ -288,7 +303,16 @@ def listen_command() -> str:
 def execute_command(command: str) -> bool:
     if not command:
         return True
+
     cmd_lower = command.lower()
+
+    if web_gui:
+        web_gui.append_log(f"Executing: {command}")
+        web_gui.update_thinking(
+            prompt=command,
+            step="Parsing command intent & checking neural core...",
+        )
+
     exit_triggers = [
         "shutdown",
         "exit",
@@ -300,10 +324,15 @@ def execute_command(command: str) -> bool:
     ]
     if any(trigger in cmd_lower for trigger in exit_triggers):
         speak("Shutting down core protocols. Have a wonderful day, Mam.")
-        time.sleep(0.5)
         return False
 
     if "weather" in cmd_lower:
+        if web_gui:
+            web_gui.update_thinking(
+                prompt=command,
+                step="Fetching local weather data...",
+                action="fetch_live_weather()",
+            )
         weather_reply = fetch_live_weather()
         conversation_history.append(
             {"role": "assistant", "content": weather_reply}
@@ -313,20 +342,36 @@ def execute_command(command: str) -> bool:
 
     conversation_history.append({"role": "user", "content": command})
     try:
+        if web_gui:
+            web_gui.update_thinking(
+                prompt=command,
+                step="Querying Llama model for function execution...",
+            )
+
         response = ollama.chat(
             model="llama3.2", messages=conversation_history, tools=TOOLS
         )
         msg = response["message"]
+
         if msg.get("tool_calls"):
             for tool in msg["tool_calls"]:
                 fn_name = tool["function"]["name"]
                 fn_args = tool["function"]["arguments"]
+
+                if web_gui:
+                    web_gui.update_thinking(
+                        prompt=command,
+                        step=f"Selected tool '{fn_name}'",
+                        action=f"{fn_name}({fn_args})",
+                    )
+
                 if fn_name in available_funcs:
                     bridge.log_signal.emit(f"Executing Tool: {fn_name}...")
                     tool_output = available_funcs[fn_name](**fn_args)
                     conversation_history.append(
                         {"role": "tool", "content": str(tool_output)}
                     )
+
                     second_response = ollama.chat(
                         model="llama3.2", messages=conversation_history
                     )
@@ -338,12 +383,19 @@ def execute_command(command: str) -> bool:
                     )
                     speak(ai_reply)
                     return True
+
         ai_reply = msg["content"].replace("*", "")
+        if web_gui:
+            web_gui.update_thinking(
+                prompt=command, step="Response synthesized. Speaking to user."
+            )
         conversation_history.append({"role": "assistant", "content": ai_reply})
         speak(ai_reply)
+
     except Exception as e:
-        speak("I encountered an issue with my local neural core.")
+        speak("I encountered an issue processing that request.")
         bridge.log_signal.emit(f"Agent Error: {e}")
+
     return True
 
 
@@ -353,50 +405,47 @@ def execute_command(command: str) -> bool:
 
 
 def run_jarvis_backend():
-    time.sleep(3)  # Allow webview HUD to open
+    time.sleep(2)
     greet_user()
 
     running = True
     while running:
-        # 1. Update HUD to Standby Mode
         try:
             if web_gui:
-                web_gui.update_state(
-                    "Standby - Say 'Jarvis' or 'Good Morning Jarvis'", "#00f0ff"
-                )
+                web_gui.update_state("Standby - Say 'Hey Jarvis'", "#00f0ff")
                 cpu = psutil.cpu_percent()
                 ram = psutil.virtual_memory().percent
                 web_gui.update_system_stats(int(cpu), int(ram))
         except Exception:
             pass
 
-        # 2. Standby Mode: Listening for Wake-Word Trigger
         if listen_for_wake_word():
             speak("At your service, Mam.")
 
-            # --- 30-SECOND ACTIVE SESSION CONVERSATION LOOP ---
             session_start_time = time.time()
             max_idle_seconds = 30
 
             while running:
                 elapsed = time.time() - session_start_time
                 if elapsed >= max_idle_seconds:
-                    speak("Idle timeout reached. Returning to standby mode, Mam.")
+                    speak("Returning to standby mode, Mam.")
+                    if web_gui:
+                        web_gui.update_thinking(
+                            prompt="[STANDBY]",
+                            step="Session timed out. Listening for wake word.",
+                        )
                     break
 
                 command = listen_command()
 
                 if command:
-                    # User provided input! Reset 30-second session timer & process
                     session_start_time = time.time()
                     running = execute_command(command)
                 else:
-                    # Silence detected, brief sleep before next turn
-                    time.sleep(0.5)
+                    time.sleep(0.2)
 
 
 def handle_manual_command(cmd_text: str):
-    """Callback for text commands typed into the HUD text box."""
     threading.Thread(target=execute_command, args=(cmd_text,), daemon=True).start()
 
 
@@ -414,6 +463,8 @@ def main():
 
     bridge.log_signal.connect(ui_log)
     bridge.status_signal.connect(ui_status)
+
+    start_hand_tracker(web_gui)
 
     backend_thread = threading.Thread(target=run_jarvis_backend, daemon=True)
     backend_thread.start()

@@ -1,76 +1,103 @@
 import os
 import subprocess
-import time
 import webbrowser
 import pyautogui
-import pywhatkit
-from comtypes import CLSCTX_ALL
-from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+
+# Windows Core Audio API imports
+try:
+    from comtypes import CLSCTX_ALL
+    from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+
+    devices = AudioUtilities.GetSpeakers()
+    interface = devices.Activate(
+        IAudioEndpointVolume._iid_, CLSCTX_ALL, None
+    )
+    volume_control = interface.QueryInterface(IAudioEndpointVolume)
+    HAS_PYCAW = True
+except Exception as e:
+    print(f"[Volume API Error]: {e}")
+    HAS_PYCAW = False
 
 
-def set_master_volume(level_percent: int) -> str:
-    """Sets the Windows master audio volume (0 to 100)."""
+def set_master_volume(level: int) -> str:
+    """Sets master volume to an exact percentage (0-100)."""
     try:
-        level_percent = max(0, min(100, int(level_percent)))
-        devices = AudioUtilities.GetSpeakers()
-        interface = devices.Activate(
-            IAudioEndpointVolume._iid_, CLSCTX_ALL, None
-        )
-        volume = interface.QueryInterface(IAudioEndpointVolume)
-
-        # Convert 0-100 to scalar (0.0 to 1.0)
-        scalar_vol = level_percent / 100.0
-        volume.SetMasterVolumeLevelScalar(scalar_vol, None)
-        return f"Set volume to {level_percent} percent."
+        level = max(0, min(100, int(level)))
+        if HAS_PYCAW:
+            # Map 0-100 to scalar float 0.0-1.0
+            volume_control.SetMasterVolumeLevelScalar(level / 100.0, None)
+            return f"Master volume set to {level} percent."
+        else:
+            # Fallback using Windows VK volume keys
+            for _ in range(50):
+                pyautogui.press("volumedown")
+            for _ in range(level // 2):
+                pyautogui.press("volumeup")
+            return f"Adjusted volume to roughly {level} percent."
     except Exception as e:
-        return f"Failed to adjust volume: {str(e)}"
+        return f"Failed to set volume: {e}"
+
+
+def change_volume_relative(delta: int) -> str:
+    """Changes master volume up (+) or down (-) by delta percentage."""
+    try:
+        if HAS_PYCAW:
+            current = volume_control.GetMasterVolumeLevelScalar()
+            new_level = max(0.0, min(1.0, current + (delta / 100.0)))
+            volume_control.SetMasterVolumeLevelScalar(new_level, None)
+            return f"Volume adjusted by {delta}%."
+        else:
+            key = "volumeup" if delta > 0 else "volumedown"
+            for _ in range(abs(delta) // 2):
+                pyautogui.press(key)
+            return f"Volume shifted by {delta}%."
+    except Exception as e:
+        return f"Failed to change volume: {e}"
 
 
 def mute_audio(mute: bool = True) -> str:
-    """Mutes or unmutes system audio."""
     try:
-        devices = AudioUtilities.GetSpeakers()
-        interface = devices.Activate(
-            IAudioEndpointVolume._iid_, CLSCTX_ALL, None
-        )
-        volume = interface.QueryInterface(IAudioEndpointVolume)
-        volume.SetMute(1 if mute else 0, None)
-        status = "muted" if mute else "unmuted"
-        return f"System audio {status}."
+        if HAS_PYCAW:
+            volume_control.SetMute(1 if mute else 0, None)
+            return "Audio muted." if mute else "Audio unmuted."
+        else:
+            pyautogui.press("volumemute")
+            return "Toggled mute."
     except Exception as e:
-        return f"Failed to toggle mute: {str(e)}"
+        return f"Mute error: {e}"
+
+
+def launch_application(app_name: str) -> str:
+    try:
+        os.system(f"start {app_name}")
+        return f"Launched {app_name}."
+    except Exception as e:
+        return f"Failed to launch app: {e}"
+
+
+def terminate_application(app_name: str) -> str:
+    try:
+        os.system(f"taskkill /f /im {app_name}.exe")
+        return f"Closed {app_name}."
+    except Exception as e:
+        return f"Failed to terminate app: {e}"
 
 
 def play_youtube_song(song_name: str) -> str:
-    """Searches and plays a specific video or song directly on YouTube."""
-    try:
-        pywhatkit.playonyt(song_name)
-        return f"Playing {song_name} on YouTube."
-    except Exception:
-        webbrowser.open(
-            f"https://www.youtube.com/results?search_query={song_name}"
-        )
-        return f"Opened YouTube search for {song_name}."
+    webbrowser.open(
+        f"https://www.youtube.com/results?search_query={song_name}"
+    )
+    return f"Searching YouTube for {song_name}."
 
 
 def take_screenshot() -> str:
-    """Takes a full-screen screenshot and saves it to the Desktop."""
     try:
-        desktop_path = os.path.join(os.path.expanduser("~"), "Desktop")
-        filename = f"JARVIS_Screenshot_{int(time.time())}.png"
-        filepath = os.path.join(desktop_path, filename)
-
-        screenshot = pyautogui.screenshot()
-        screenshot.save(filepath)
-        return f"Screenshot saved to your Desktop as {filename}."
+        pyautogui.screenshot("screenshot.png")
+        return "Screenshot saved as screenshot.png."
     except Exception as e:
-        return f"Failed to take screenshot: {str(e)}"
+        return f"Screenshot failed: {e}"
 
 
 def lock_computer() -> str:
-    """Locks the Windows user session instantly."""
-    try:
-        subprocess.run("rundll32.exe user32.dll,LockWorkStation", shell=True)
-        return "Locking workstation."
-    except Exception as e:
-        return f"Failed to lock PC: {str(e)}"
+    os.system("rundll32.exe user32.dll,LockWorkStation")
+    return "Locking system."
