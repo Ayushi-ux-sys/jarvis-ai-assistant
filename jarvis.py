@@ -25,17 +25,25 @@ import pyttsx3
 import requests
 import speech_recognition as sr
 import webview
-from duckduckgo_search import DDGS
 from PyQt6.QtCore import QObject, pyqtSignal
+
+# Import DDGS safely across package versions
+try:
+    from ddgs import DDGS
+except ImportError:
+    from duckduckgo_search import DDGS
 
 # --- Custom Modules ---
 from gui import JarvisWebGUI
 from system_controls import (
+    change_volume_relative,
+    launch_application,
     lock_computer,
     mute_audio,
     play_youtube_song,
     set_master_volume,
     take_screenshot,
+    terminate_application,
 )
 from wake_word import listen_for_wake_word
 
@@ -162,33 +170,6 @@ def get_system_stats() -> str:
     return f"CPU usage is at {cpu} percent, and RAM usage is at {ram} percent."
 
 
-def close_application(app_name: str) -> str:
-    app_clean = app_name.lower().strip()
-    if "code" in app_clean or "jarvis" in app_clean:
-        return "I will not close your active development editor, Mam."
-    executable_map = {
-        "chrome": "chrome.exe",
-        "browser": "chrome.exe",
-        "notepad": "notepad.exe",
-        "spotify": "Spotify.exe",
-    }
-    target_exe = executable_map.get(app_clean, f"{app_clean}.exe")
-    closed_any = False
-    for proc in psutil.process_iter(["pid", "name"]):
-        try:
-            if (
-                proc.info["name"]
-                and proc.info["name"].lower() == target_exe.lower()
-            ):
-                proc.terminate()
-                closed_any = True
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            continue
-    return (
-        f"Closed {app_name}." if closed_any else f"Could not find {app_name}."
-    )
-
-
 def read_copied_code_or_text() -> str:
     text = pyperclip.paste()
     return f"Clipboard text: {text[:1000]}" if text.strip() else "Clipboard empty."
@@ -222,32 +203,17 @@ def capture_screen_and_describe(
         return f"Screen analysis error: {str(e)}"
 
 
-def open_application_or_site(target: str) -> str:
-    target_clean = target.lower().strip()
-    if "youtube" in target_clean:
-        webbrowser.open("https://www.youtube.com")
-        return "Opened YouTube."
-    elif "google" in target_clean:
-        webbrowser.open("https://www.google.com")
-        return "Opened Google."
-    elif "github" in target_clean:
-        webbrowser.open("https://www.github.com")
-        return "Opened GitHub."
-    else:
-        webbrowser.open(f"https://www.google.com/search?q={target}")
-        return f"Searching Google for {target}."
-
-
 TOOLS = [
     get_live_internet_updates,
     get_system_stats,
-    close_application,
     read_copied_code_or_text,
-    open_application_or_site,
     save_user_memory,
     recall_user_memories,
     set_master_volume,
+    change_volume_relative,
     mute_audio,
+    launch_application,
+    terminate_application,
     play_youtube_song,
     take_screenshot,
     lock_computer,
@@ -256,13 +222,14 @@ TOOLS = [
 available_funcs = {
     "get_live_internet_updates": get_live_internet_updates,
     "get_system_stats": get_system_stats,
-    "close_application": close_application,
     "read_copied_code_or_text": read_copied_code_or_text,
-    "open_application_or_site": open_application_or_site,
     "save_user_memory": save_user_memory,
     "recall_user_memories": recall_user_memories,
     "set_master_volume": set_master_volume,
+    "change_volume_relative": change_volume_relative,
     "mute_audio": mute_audio,
+    "launch_application": launch_application,
+    "terminate_application": terminate_application,
     "play_youtube_song": play_youtube_song,
     "take_screenshot": take_screenshot,
     "lock_computer": lock_computer,
@@ -274,7 +241,7 @@ available_funcs = {
 
 
 def speak(text: str):
-    bridge.status_signal.emit("Speaking...", "#00f0ff")
+    bridge.status_signal.emit("Speaking...", "#00e676")
     bridge.log_signal.emit(f"JARVIS: {text}")
     try:
         tts_engine = pyttsx3.init("sapi5")
@@ -287,7 +254,6 @@ def speak(text: str):
         tts_engine.stop()
     except Exception as e:
         print(f"[Speech Error]: {e}")
-    bridge.status_signal.emit("Standby - Say 'Hey Jarvis'", "#00f0ff")
 
 
 def greet_user():
@@ -298,17 +264,17 @@ def greet_user():
 
 def listen_command() -> str:
     r = sr.Recognizer()
-    r.pause_threshold = 2.0
+    r.pause_threshold = 1.5
     r.dynamic_energy_threshold = True
     with sr.Microphone() as source:
         bridge.status_signal.emit("Listening...", "#ffc107")
-        bridge.log_signal.emit("Listening (take your time)...")
-        r.adjust_for_ambient_noise(source, duration=0.4)
+        bridge.log_signal.emit("Listening...")
+        r.adjust_for_ambient_noise(source, duration=0.3)
         try:
-            audio = r.listen(source, timeout=None, phrase_time_limit=None)
-            bridge.status_signal.emit("Processing Voice...", "#9c27b0")
+            audio = r.listen(source, timeout=5.0, phrase_time_limit=10.0)
+            bridge.status_signal.emit("Processing...", "#9c27b0")
             query = r.recognize_google(audio, language="en-US")
-            bridge.log_signal.emit(f"Mam: {query}")
+            bridge.log_signal.emit(f"User: {query}")
             return query.strip()
         except Exception:
             return ""
@@ -387,29 +353,56 @@ def execute_command(command: str) -> bool:
 
 
 def run_jarvis_backend():
-    time.sleep(3)
+    time.sleep(3)  # Allow webview HUD to open
     greet_user()
+
     running = True
     while running:
+        # 1. Update HUD to Standby Mode
         try:
             if web_gui:
-                web_gui.update_state("Standby - Say 'Hey Jarvis'", "#00f0ff")
+                web_gui.update_state(
+                    "Standby - Say 'Jarvis' or 'Good Morning Jarvis'", "#00f0ff"
+                )
                 cpu = psutil.cpu_percent()
                 ram = psutil.virtual_memory().percent
                 web_gui.update_system_stats(int(cpu), int(ram))
         except Exception:
             pass
 
+        # 2. Standby Mode: Listening for Wake-Word Trigger
         if listen_for_wake_word():
             speak("At your service, Mam.")
-            command = listen_command()
-            if command:
-                running = execute_command(command)
+
+            # --- 30-SECOND ACTIVE SESSION CONVERSATION LOOP ---
+            session_start_time = time.time()
+            max_idle_seconds = 30
+
+            while running:
+                elapsed = time.time() - session_start_time
+                if elapsed >= max_idle_seconds:
+                    speak("Idle timeout reached. Returning to standby mode, Mam.")
+                    break
+
+                command = listen_command()
+
+                if command:
+                    # User provided input! Reset 30-second session timer & process
+                    session_start_time = time.time()
+                    running = execute_command(command)
+                else:
+                    # Silence detected, brief sleep before next turn
+                    time.sleep(0.5)
+
+
+def handle_manual_command(cmd_text: str):
+    """Callback for text commands typed into the HUD text box."""
+    threading.Thread(target=execute_command, args=(cmd_text,), daemon=True).start()
 
 
 def main():
     global web_gui
-    web_gui = JarvisWebGUI()
+    web_gui = JarvisWebGUI(on_command_received=handle_manual_command)
 
     def ui_log(msg):
         if web_gui:
