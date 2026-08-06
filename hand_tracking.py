@@ -3,23 +3,20 @@ import threading
 import time
 import cv2
 import numpy as np
-import pyautogui
-from system_controls import change_volume_relative, mute_audio
+from system_controls import change_volume_relative
 
-# Cooldown timer to prevent gestures from rapidly re-triggering
 last_gesture_time = 0
-is_muted = False
 
 
 def start_hand_tracker(gui_instance):
-    """Runs continuous gesture detection for HUD scaling, volume adjustment, muting, and media control."""
+    """Safe hand tracking for Arc Reactor scaling and Thumbs Up/Down gesture detection."""
 
     def track():
-        global last_gesture_time, is_muted
+        global last_gesture_time
         cap = cv2.VideoCapture(0)
 
         if not cap.isOpened():
-            print("[Hand Tracking] Could not open camera.")
+            print("[Hand Tracking] Webcam unavailable.")
             return
 
         while cap.isOpened():
@@ -28,13 +25,13 @@ def start_hand_tracker(gui_instance):
                 time.sleep(0.03)
                 continue
 
-            # Mirror frame for natural tracking
             frame = cv2.flip(frame, 1)
+            h, w, _ = frame.shape
             hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
-            # Skin color segmentation
-            lower_skin = np.array([0, 20, 70], dtype=np.uint8)
-            upper_skin = np.array([20, 255, 255], dtype=np.uint8)
+            # Skin color range detection
+            lower_skin = np.array([0, 25, 60], dtype=np.uint8)
+            upper_skin = np.array([20, 170, 255], dtype=np.uint8)
             mask = cv2.inRange(hsv, lower_skin, upper_skin)
             mask = cv2.GaussianBlur(mask, (5, 5), 0)
 
@@ -46,52 +43,55 @@ def start_hand_tracker(gui_instance):
                 max_contour = max(contours, key=cv2.contourArea)
                 area = cv2.contourArea(max_contour)
 
-                if area > 2500:
-                    x, y, w, h = cv2.boundingRect(max_contour)
-                    aspect_ratio = float(w) / float(h)
-
-                    # 1. Scale 3D Three.js Arc Reactor in real-time
-                    scale = max(0.6, min(2.2, area / 22000.0))
-                    if gui_instance and gui_instance.is_alive():
+                # 1. Arc Reactor Scaling (Safely wrapped)
+                if area > 4000:
+                    scale = max(0.5, min(2.5, area / 22000.0))
+                    if gui_instance:
                         try:
                             gui_instance.window.evaluate_js(
                                 f"window.updateArcScale({scale:.2f});"
                             )
                         except Exception:
+                            # Catch and suppress ObjectDisposedException when window closes
                             pass
 
-                    # 2. Check gesture cooldown (1.2 seconds between commands)
+                    # 2. Thumbs Up / Down Volume Control
+                    bx, by, bw, bh = cv2.boundingRect(max_contour)
+                    aspect_ratio = float(bw) / float(bh)
+
                     current_time = time.time()
-                    if current_time - last_gesture_time > 1.2:
+                    if current_time - last_gesture_time > 2.2:
 
-                        # Gesture A: Closed Fist (Aspect ratio < 0.55 & low area) -> Volume Down
-                        if aspect_ratio < 0.55 and area < 8500:
-                            change_volume_relative(-10)
-                            if gui_instance and gui_instance.is_alive():
-                                gui_instance.append_log(
-                                    "[GESTURE] Closed Fist: Volume -10%"
-                                )
-                            last_gesture_time = current_time
+                        # Vertical contour check for thumb position
+                        if aspect_ratio < 0.65 and area > 10000:
+                            M = cv2.moments(max_contour)
+                            if M["m00"] != 0:
+                                cy = int(M["m01"] / M["m00"])
+                                relative_cy = (cy - by) / float(bh)
 
-                        # Gesture B: Open Palm (Wide bounding box & high area) -> Volume Up
-                        elif aspect_ratio > 1.15 and area > 18000:
-                            change_volume_relative(10)
-                            if gui_instance and gui_instance.is_alive():
-                                gui_instance.append_log(
-                                    "[GESTURE] Open Palm: Volume +10%"
-                                )
-                            last_gesture_time = current_time
+                                # THUMBS UP
+                                if relative_cy < 0.42:
+                                    change_volume_relative(10)
+                                    try:
+                                        if gui_instance:
+                                            gui_instance.append_log(
+                                                "[GESTURE] Thumbs Up: Volume +10%"
+                                            )
+                                    except Exception:
+                                        pass
+                                    last_gesture_time = current_time
 
-                        # Gesture C: Tall / Narrow Two-Finger Sign (0.55 <= ratio <= 0.75) -> Toggle Mute
-                        elif 0.55 <= aspect_ratio <= 0.75 and 9000 <= area <= 15000:
-                            is_muted = not is_muted
-                            mute_audio(is_muted)
-                            status_str = "Muted" if is_muted else "Unmuted"
-                            if gui_instance and gui_instance.is_alive():
-                                gui_instance.append_log(
-                                    f"[GESTURE] Two-Finger Sign: Audio {status_str}"
-                                )
-                            last_gesture_time = current_time
+                                # THUMBS DOWN
+                                elif relative_cy > 0.58:
+                                    change_volume_relative(-10)
+                                    try:
+                                        if gui_instance:
+                                            gui_instance.append_log(
+                                                "[GESTURE] Thumbs Down: Volume -10%"
+                                            )
+                                    except Exception:
+                                        pass
+                                    last_gesture_time = current_time
 
             time.sleep(0.03)
 

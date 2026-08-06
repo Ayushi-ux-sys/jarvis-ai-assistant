@@ -97,6 +97,13 @@ def start_gui():
     gui = JarvisWebGUI()
     webview.start()
 
+def updateArcScale(self, scale):
+    if self.window:
+        try:
+            self.window.evaluate_js(f"window.updateArcScale({scale:.2f});")
+        except Exception:
+            pass
+
 
 if __name__ == "__main__":
     start_gui()

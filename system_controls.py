@@ -3,15 +3,21 @@ import subprocess
 import webbrowser
 import pyautogui
 
-# Windows Core Audio API imports
+# Windows Core Audio API imports (compatible with all pycaw versions)
 try:
     from comtypes import CLSCTX_ALL
     from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 
-    devices = AudioUtilities.GetSpeakers()
-    interface = devices.Activate(
-        IAudioEndpointVolume._iid_, CLSCTX_ALL, None
-    )
+    speakers = AudioUtilities.GetSpeakers()
+    
+    # Check for direct Activate support or extract device endpoint
+    if hasattr(speakers, 'Activate'):
+        interface = speakers.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+    elif hasattr(speakers, 'Endpoint'):
+        interface = speakers.Endpoint.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+    else:
+        interface = speakers._dev.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+        
     volume_control = interface.QueryInterface(IAudioEndpointVolume)
     HAS_PYCAW = True
 except Exception as e:
@@ -24,11 +30,9 @@ def set_master_volume(level: int) -> str:
     try:
         level = max(0, min(100, int(level)))
         if HAS_PYCAW:
-            # Map 0-100 to scalar float 0.0-1.0
             volume_control.SetMasterVolumeLevelScalar(level / 100.0, None)
             return f"Master volume set to {level} percent."
         else:
-            # Fallback using Windows VK volume keys
             for _ in range(50):
                 pyautogui.press("volumedown")
             for _ in range(level // 2):
