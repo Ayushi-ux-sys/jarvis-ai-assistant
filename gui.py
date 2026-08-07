@@ -1,109 +1,76 @@
-import os
 import webview
-
-command_callback = None
-
-
-class JSAPI:
-
-    def send_command(self, text: str):
-        global command_callback
-        if command_callback and text:
-            command_callback(text)
 
 
 class JarvisWebGUI:
 
     def __init__(self, on_command_received=None):
-        global command_callback
-        command_callback = on_command_received
+        self.on_command_received = on_command_received
+        self.window = None
+        self.is_running = True
 
-        base_dir = os.path.dirname(os.path.abspath(__file__))
+    def _on_closed(self):
+        """Triggered automatically when the user closes the window."""
+        self.is_running = False
+        self.window = None
 
-        html_path = os.path.join(base_dir, "template", "index.html")
-        if not os.path.exists(html_path):
-            html_path = os.path.join(base_dir, "templates", "index.html")
+    def start_gui(self):
+        class Api:
 
-        with open(html_path, "r", encoding="utf-8") as f:
-            html_content = f.read()
+            def __init__(parent_self):
+                self.parent = parent_self
 
-        api = JSAPI()
+            def send_command(api_self, text):
+                if self.on_command_received:
+                    self.on_command_received(text)
+
         self.window = webview.create_window(
-            title="J.A.R.V.I.S. HUD INTERFACE",
-            html=html_content,
-            js_api=api,
-            width=1150,
-            height=740,
+            "J.A.R.V.I.S. HUD INTERFACE",
+            "templates/index.html",
+            js_api=Api(self),
+            width=1280,
+            height=720,
             resizable=True,
-            background_color="#030a12",
         )
+        self.window.events.closed += self._on_closed
 
     def is_alive(self) -> bool:
-        """Helper to check if the webview window is valid and open."""
-        try:
-            return self.window is not None and len(webview.windows) > 0
-        except Exception:
-            return False
+        return self.is_running and self.window is not None
 
-    def update_state(self, status_text: str, color_hex: str):
+    def _safe_evaluate_js(self, js_code: str):
+        """Executes JavaScript safely, swallowing ObjectDisposedExceptions if the window is closed."""
         if not self.is_alive():
             return
         try:
-            self.window.evaluate_js(
-                f"window.updateStatus('{status_text}', '{color_hex}');"
-            )
-        except Exception:
-            pass
-
-    def append_log(self, text: str):
-        if not self.is_alive():
-            return
-        try:
-            clean_text = (
-                text.replace("'", "\\'").replace("\n", " ").replace("\r", "")
-            )
-            self.window.evaluate_js(f"window.addLog('{clean_text}');")
-        except Exception:
-            pass
-
-    def update_thinking(self, prompt: str, step: str = "", action: str = ""):
-        if not self.is_alive():
-            return
-        try:
-            clean_prompt = (
-                prompt.replace("'", "\\'").replace("\n", " ").replace("\r", "")
-            )
-            clean_step = (
-                step.replace("'", "\\'").replace("\n", " ").replace("\r", "")
-            )
-            clean_action = (
-                action.replace("'", "\\'").replace("\n", " ").replace("\r", "")
-            )
-            js_code = f"window.updateThinking({{prompt: '{clean_prompt}', step: '{clean_step}', action: '{clean_action}'}});"
             self.window.evaluate_js(js_code)
         except Exception:
-            pass
+            self.is_running = False
+            self.window = None
+
+    def update_state(self, status: str, color: str):
+        self._safe_evaluate_js(
+            f"if(window.updateStatus) window.updateStatus('{status}', '{color}');"
+        )
+
+    def append_log(self, text: str):
+        safe_text = (
+            text.replace("\\", "\\\\").replace("'", "\\'").replace("\n", " ")
+        )
+        self._safe_evaluate_js(
+            f"if(window.addLog) window.addLog('{safe_text}');"
+        )
+
+    def update_thinking(
+        self, prompt: str, step: str = "", action: str = ""
+    ):
+        safe_prompt = prompt.replace("'", "\\'")
+        safe_step = step.replace("'", "\\'")
+        safe_action = action.replace("'", "\\'")
+        js_payload = f"{{ prompt: '{safe_prompt}', step: '{safe_step}', action: '{safe_action}' }}"
+        self._safe_evaluate_js(
+            f"if(window.updateThinking) window.updateThinking({js_payload});"
+        )
 
     def update_system_stats(self, cpu: int, ram: int):
-        if not self.is_alive():
-            return
-        try:
-            self.window.evaluate_js(f"window.updateStats({cpu}, {ram});")
-        except Exception:
-            pass
-
-
-def start_gui():
-    gui = JarvisWebGUI()
-    webview.start()
-
-def updateArcScale(self, scale):
-    if self.window:
-        try:
-            self.window.evaluate_js(f"window.updateArcScale({scale:.2f});")
-        except Exception:
-            pass
-
-
-if __name__ == "__main__":
-    start_gui()
+        self._safe_evaluate_js(
+            f"if(window.updateStats) window.updateStats({cpu}, {ram});"
+        )
