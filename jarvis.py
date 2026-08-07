@@ -27,7 +27,7 @@ import speech_recognition as sr
 import webview
 from PyQt6.QtCore import QObject, pyqtSignal
 
-# Safely import DDGS across package versions
+# Safe DDGS import (compatible with latest package updates)
 try:
     from ddgs import DDGS
 except ImportError:
@@ -47,14 +47,6 @@ from system_controls import (
     terminate_application,
 )
 from wake_word import listen_for_wake_word
-
-# Optional OCR
-try:
-    import pytesseract
-
-    HAS_OCR = True
-except ImportError:
-    HAS_OCR = False
 
 # Global Web GUI Handle
 web_gui = None
@@ -209,30 +201,35 @@ available_funcs = {
 }
 
 # ==========================================
-# 🔊 SPEECH ENGINE & LISTENERS
+# 🔊 NON-BLOCKING SPEECH ENGINE & LISTENERS
 # ==========================================
 
 
 def speak(text: str):
+    """Asynchronous/Non-blocking TTS to prevent blocking audio input."""
     bridge.status_signal.emit("Speaking...", "#00e676")
     bridge.log_signal.emit(f"JARVIS: {text}")
-    try:
-        tts_engine = pyttsx3.init("sapi5")
-        tts_engine.setProperty("rate", 185)
-        voices = tts_engine.getProperty("voices")
-        if len(voices) > 0:
-            tts_engine.setProperty("voice", voices[0].id)
-        tts_engine.say(text)
-        tts_engine.runAndWait()
-        tts_engine.stop()
-    except Exception as e:
-        print(f"[Speech Error]: {e}")
+
+    def _speak_thread():
+        try:
+            tts_engine = pyttsx3.init("sapi5")
+            tts_engine.setProperty("rate", 185)
+            voices = tts_engine.getProperty("voices")
+            if len(voices) > 0:
+                tts_engine.setProperty("voice", voices[0].id)
+            tts_engine.say(text)
+            tts_engine.runAndWait()
+            tts_engine.stop()
+        except Exception as e:
+            print(f"[TTS Error]: {e}")
+
+    threading.Thread(target=_speak_thread, daemon=True).start()
 
 
 def greet_user():
     greeting = "Systems online, Mam. How can I assist you?"
     conversation_history.append({"role": "assistant", "content": greeting})
-    if web_gui:
+    if web_gui and web_gui.is_alive():
         web_gui.update_thinking(
             prompt="System Boot", step="Core initialization complete."
         )
@@ -241,58 +238,59 @@ def greet_user():
 
 def listen_command() -> str:
     r = sr.Recognizer()
-    r.pause_threshold = 1.2
-    r.energy_threshold = 300
-    r.dynamic_energy_threshold = True
+    r.pause_threshold = 0.8
+    r.non_speaking_duration = 0.5
+    r.energy_threshold = 250
+    r.dynamic_energy_threshold = False
 
-    with sr.Microphone() as source:
-        bridge.status_signal.emit("Listening for Query...", "#ffc107")
-        if web_gui:
-            web_gui.update_thinking(
-                prompt="[AWAITING VOICE INPUT]",
-                step="Microphone active. Please speak your question...",
-            )
+    time.sleep(0.3)  # Allow audio driver time for microphone handoff
 
-        r.adjust_for_ambient_noise(source, duration=0.3)
-
-        try:
-            audio = r.listen(source, timeout=8.0, phrase_time_limit=12.0)
-            bridge.status_signal.emit("Converting Voice to Text...", "#9c27b0")
-
-            if web_gui:
+    try:
+        with sr.Microphone() as source:
+            bridge.status_signal.emit("Listening...", "#ffc107")
+            if web_gui and web_gui.is_alive():
                 web_gui.update_thinking(
-                    prompt="[PROCESSING AUDIO]",
+                    prompt="[MICROPHONE ACTIVE]",
+                    step="Listening for speech input...",
+                )
+
+            audio = r.listen(source, timeout=7.0, phrase_time_limit=10.0)
+
+            bridge.status_signal.emit("Processing Audio...", "#9c27b0")
+            if web_gui and web_gui.is_alive():
+                web_gui.update_thinking(
+                    prompt="[TRANSCRIBING AUDIO]",
                     step="Sending audio stream to Speech-to-Text engine...",
                 )
 
             query = r.recognize_google(audio, language="en-US").strip()
 
-            if query and web_gui:
+            if query and web_gui and web_gui.is_alive():
                 web_gui.append_log(f"User Spoke: {query}")
                 web_gui.update_thinking(
                     prompt=query,
-                    step="Voice-to-Text successful! Analyzing prompt intent...",
+                    step="Transcription complete! Processing query intent...",
                 )
 
             return query
 
-        except sr.WaitTimeoutError:
-            if web_gui:
-                web_gui.update_thinking(
-                    prompt="[NO SPEECH DETECTED]",
-                    step="Listening timed out waiting for input.",
-                )
-            return ""
-        except sr.UnknownValueError:
-            if web_gui:
-                web_gui.update_thinking(
-                    prompt="[UNRECOGNIZED AUDIO]",
-                    step="Could not parse speech clearly.",
-                )
-            return ""
-        except Exception as e:
-            bridge.log_signal.emit(f"Audio Capture Error: {e}")
-            return ""
+    except sr.WaitTimeoutError:
+        if web_gui and web_gui.is_alive():
+            web_gui.update_thinking(
+                prompt="[NO SPEECH DETECTED]",
+                step="Listening timed out waiting for input.",
+            )
+        return ""
+    except sr.UnknownValueError:
+        if web_gui and web_gui.is_alive():
+            web_gui.update_thinking(
+                prompt="[AUDIO UNCLEAR]",
+                step="Could not parse speech clearly.",
+            )
+        return ""
+    except Exception as e:
+        bridge.log_signal.emit(f"Audio Capture Error: {e}")
+        return ""
 
 
 # ==========================================
@@ -306,7 +304,7 @@ def execute_command(command: str) -> bool:
 
     cmd_lower = command.lower()
 
-    if web_gui:
+    if web_gui and web_gui.is_alive():
         web_gui.append_log(f"Executing: {command}")
         web_gui.update_thinking(
             prompt=command,
@@ -327,7 +325,7 @@ def execute_command(command: str) -> bool:
         return False
 
     if "weather" in cmd_lower:
-        if web_gui:
+        if web_gui and web_gui.is_alive():
             web_gui.update_thinking(
                 prompt=command,
                 step="Fetching local weather data...",
@@ -342,10 +340,10 @@ def execute_command(command: str) -> bool:
 
     conversation_history.append({"role": "user", "content": command})
     try:
-        if web_gui:
+        if web_gui and web_gui.is_alive():
             web_gui.update_thinking(
                 prompt=command,
-                step="Querying Llama model for function execution...",
+                step="Querying Llama model for tool execution...",
             )
 
         response = ollama.chat(
@@ -358,7 +356,7 @@ def execute_command(command: str) -> bool:
                 fn_name = tool["function"]["name"]
                 fn_args = tool["function"]["arguments"]
 
-                if web_gui:
+                if web_gui and web_gui.is_alive():
                     web_gui.update_thinking(
                         prompt=command,
                         step=f"Selected tool '{fn_name}'",
@@ -385,7 +383,7 @@ def execute_command(command: str) -> bool:
                     return True
 
         ai_reply = msg["content"].replace("*", "")
-        if web_gui:
+        if web_gui and web_gui.is_alive():
             web_gui.update_thinking(
                 prompt=command, step="Response synthesized. Speaking to user."
             )
@@ -410,8 +408,11 @@ def run_jarvis_backend():
 
     running = True
     while running:
+        if web_gui and not web_gui.is_alive():
+            break
+
         try:
-            if web_gui:
+            if web_gui and web_gui.is_alive():
                 web_gui.update_state("Standby - Say 'Hey Jarvis'", "#00f0ff")
                 cpu = psutil.cpu_percent()
                 ram = psutil.virtual_memory().percent
@@ -425,11 +426,11 @@ def run_jarvis_backend():
             session_start_time = time.time()
             max_idle_seconds = 30
 
-            while running:
+            while running and (web_gui and web_gui.is_alive()):
                 elapsed = time.time() - session_start_time
                 if elapsed >= max_idle_seconds:
                     speak("Returning to standby mode, Mam.")
-                    if web_gui:
+                    if web_gui and web_gui.is_alive():
                         web_gui.update_thinking(
                             prompt="[STANDBY]",
                             step="Session timed out. Listening for wake word.",
@@ -453,22 +454,27 @@ def main():
     global web_gui
     web_gui = JarvisWebGUI(on_command_received=handle_manual_command)
 
+    # 1. Create window instance before webview.start()
+    web_gui.start_gui()
+
     def ui_log(msg):
-        if web_gui:
+        if web_gui and web_gui.is_alive():
             web_gui.append_log(msg)
 
     def ui_status(text, color):
-        if web_gui:
+        if web_gui and web_gui.is_alive():
             web_gui.update_state(text, color)
 
     bridge.log_signal.connect(ui_log)
     bridge.status_signal.connect(ui_status)
 
+    # 2. Start hand tracker and voice backend threads
     start_hand_tracker(web_gui)
 
     backend_thread = threading.Thread(target=run_jarvis_backend, daemon=True)
     backend_thread.start()
 
+    # 3. Start PyWebView UI Loop
     webview.start()
 
 

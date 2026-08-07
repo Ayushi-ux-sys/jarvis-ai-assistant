@@ -1,459 +1,299 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>J.A.R.V.I.S. HUD INTERFACE</title>
-  <!-- Load Three.js library for 3D Holographic Rendering -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-  <style>
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-    }
-    body {
-      background-color: #030a12;
-      color: #00f0ff;
-      font-family: 'Consolas', 'Segoe UI', monospace;
-      overflow: hidden;
-      height: 100vh;
-      display: flex;
-      flex-direction: column;
-      user-select: none;
-    }
-    
-    .bg-overlay {
-      position: absolute;
-      width: 100%;
-      height: 100%;
-      background: radial-gradient(circle, rgba(0,240,255,0.08) 0%, rgba(3,10,18,0.95) 85%),
-                  linear-gradient(rgba(0,240,255,0.03) 1px, transparent 1px),
-                  linear-gradient(90deg, rgba(0,240,255,0.03) 1px, transparent 1px);
-      background-size: 100% 100%, 20px 20px, 20px 20px;
-      pointer-events: none;
-    }
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>J.A.R.V.I.S. HUD INTERFACE</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background-color: #020813;
+            color: #00f0ff;
+            font-family: 'Segoe UI', Consolas, monospace;
+            overflow: hidden;
+            height: 100vh;
+            width: 100vw;
+        }
+        #canvas-container {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            z-index: 1;
+        }
+        .ui-layer {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            z-index: 2;
+            pointer-events: none;
+            display: grid;
+            grid-template-columns: 320px 1fr 320px;
+            grid-template-rows: 70px 1fr 180px;
+            padding: 20px;
+            gap: 15px;
+        }
+        .hud-panel {
+            background: rgba(2, 12, 27, 0.75);
+            border: 1px solid rgba(0, 240, 255, 0.4);
+            box-shadow: 0 0 15px rgba(0, 240, 255, 0.15);
+            backdrop-filter: blur(8px);
+            padding: 12px 16px;
+            pointer-events: auto;
+            position: relative;
+        }
+        .hud-panel::before {
+            content: ''; position: absolute; top: -1px; left: -1px;
+            width: 10px; height: 10px; border-top: 2px solid #00f0ff; border-left: 2px solid #00f0ff;
+        }
+        .hud-panel::after {
+            content: ''; position: absolute; bottom: -1px; right: -1px;
+            width: 10px; height: 10px; border-bottom: 2px solid #00f0ff; border-right: 2px solid #00f0ff;
+        }
+        .header { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: center; }
+        .title { font-size: 20px; font-weight: bold; letter-spacing: 3px; text-shadow: 0 0 10px #00f0ff; }
+        .header-right { display: flex; align-items: center; gap: 20px; }
+        .time-display { font-size: 14px; color: #a0f0ff; letter-spacing: 1px; text-align: right; }
+        .status-badge { font-size: 12px; padding: 6px 14px; border: 1px solid #00f0ff; background: rgba(0,240,255,0.1); }
+        
+        .side-stack { display: flex; flex-direction: column; gap: 15px; }
+        .panel-title { font-size: 13px; font-weight: bold; letter-spacing: 1.5px; margin-bottom: 8px; border-bottom: 1px solid rgba(0,240,255,0.2); padding-bottom: 4px; }
+        
+        /* Central Overlay Title matching reference image */
+        .jarvis-core-label {
+            position: absolute;
+            top: 48%; left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 28px;
+            font-weight: 900;
+            letter-spacing: 8px;
+            color: #ffffff;
+            text-shadow: 0 0 15px #00f0ff, 0 0 30px #00f0ff;
+            pointer-events: none;
+            z-index: 3;
+        }
 
-    .hud-container {
-      position: relative;
-      z-index: 10;
-      display: grid;
-      grid-template-columns: 280px 1fr 280px;
-      grid-template-rows: 55px 1fr 220px;
-      height: 100vh;
-      padding: 12px;
-      gap: 12px;
-    }
-
-    .hud-card {
-      border: 1px solid rgba(0, 240, 255, 0.3);
-      background: rgba(0, 20, 35, 0.45);
-      box-shadow: 0 0 15px rgba(0, 240, 255, 0.1), inset 0 0 15px rgba(0, 240, 255, 0.05);
-      border-radius: 4px;
-      padding: 10px;
-      position: relative;
-    }
-    .hud-card::before {
-      content: '';
-      position: absolute;
-      top: -1px; left: -1px; width: 8px; height: 8px;
-      border-top: 2px solid #00f0ff; border-left: 2px solid #00f0ff;
-    }
-    .hud-card::after {
-      content: '';
-      position: absolute;
-      bottom: -1px; right: -1px; width: 8px; height: 8px;
-      border-bottom: 2px solid #00f0ff; border-right: 2px solid #00f0ff;
-    }
-
-    .header-card {
-      grid-column: 1 / -1;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      letter-spacing: 2px;
-    }
-    .header-title {
-      font-size: 18px;
-      font-weight: bold;
-      text-shadow: 0 0 10px #00f0ff;
-    }
-
-    .center-hud {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      position: relative;
-      overflow: hidden;
-    }
-    #threeCanvasContainer {
-      width: 100%;
-      height: 100%;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-    }
-
-    .panel-title {
-      font-size: 11px;
-      text-transform: uppercase;
-      border-bottom: 1px solid rgba(0, 240, 255, 0.3);
-      padding-bottom: 4px;
-      margin-bottom: 8px;
-      letter-spacing: 1px;
-    }
-    
-    .metric-row {
-      display: flex;
-      justify-content: space-between;
-      margin-bottom: 6px;
-      font-size: 11px;
-    }
-
-    .bar-container {
-      width: 100%;
-      height: 6px;
-      background: rgba(0, 240, 255, 0.1);
-      border: 1px solid rgba(0, 240, 255, 0.3);
-      margin-top: 2px;
-      margin-bottom: 8px;
-    }
-    .bar-fill {
-      height: 100%;
-      background: #00f0ff;
-      box-shadow: 0 0 8px #00f0ff;
-      width: 30%;
-      transition: width 0.4s ease;
-    }
-
-    .bottom-section {
-      grid-column: 1 / -1;
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 12px;
-    }
-
-    .thinking-card {
-      border: 1px solid rgba(156, 39, 176, 0.5);
-      background: rgba(25, 5, 35, 0.5);
-      box-shadow: 0 0 15px rgba(156, 39, 176, 0.2), inset 0 0 10px rgba(156, 39, 176, 0.1);
-      display: flex;
-      flex-direction: column;
-    }
-    .thinking-title {
-      color: #e040fb;
-      font-size: 11px;
-      font-weight: bold;
-      letter-spacing: 1.5px;
-      border-bottom: 1px solid rgba(224, 64, 251, 0.3);
-      padding-bottom: 4px;
-      margin-bottom: 6px;
-    }
-    .thinking-content {
-      flex: 1;
-      overflow-y: auto;
-      font-family: 'Consolas', monospace;
-      font-size: 12px;
-      color: #ea80fc;
-      line-height: 1.4;
-    }
-
-    .terminal-card {
-      display: flex;
-      flex-direction: column;
-      justify-content: space-between;
-    }
-    .log-container {
-      overflow-y: auto;
-      font-family: 'Consolas', monospace;
-      font-size: 12px;
-      color: #7df9ff;
-      height: 120px;
-    }
-    .log-entry {
-      margin-bottom: 3px;
-      text-shadow: 0 0 5px rgba(0, 240, 255, 0.5);
-    }
-
-    .input-box-container {
-      display: flex;
-      gap: 8px;
-      margin-top: 6px;
-    }
-    .hud-input {
-      flex: 1;
-      background: rgba(0, 10, 20, 0.8);
-      border: 1px solid rgba(0, 240, 255, 0.4);
-      color: #00f0ff;
-      padding: 6px 10px;
-      font-family: 'Consolas', monospace;
-      font-size: 12px;
-      outline: none;
-      border-radius: 2px;
-    }
-    .hud-input:focus {
-      border-color: #00f0ff;
-      box-shadow: 0 0 8px rgba(0, 240, 255, 0.3);
-    }
-    .hud-btn {
-      background: rgba(0, 240, 255, 0.15);
-      border: 1px solid #00f0ff;
-      color: #00f0ff;
-      padding: 6px 14px;
-      cursor: pointer;
-      font-family: 'Consolas', monospace;
-      font-weight: bold;
-      transition: all 0.2s ease;
-    }
-    .hud-btn:hover {
-      background: #00f0ff;
-      color: #030a12;
-      box-shadow: 0 0 10px #00f0ff;
-    }
-  </style>
+        .logs-panel { grid-column: 1 / -1; display: flex; flex-direction: column; justify-content: space-between; }
+        .log-entries { height: 90px; overflow-y: auto; font-size: 12px; }
+        .log-entry { margin-bottom: 3px; border-bottom: 1px solid rgba(0,240,255,0.06); padding-bottom: 2px; }
+        
+        .input-bar { display: flex; gap: 10px; margin-top: 8px; }
+        .input-bar input {
+            flex: 1; background: rgba(0, 240, 255, 0.05); border: 1px solid rgba(0, 240, 255, 0.4);
+            color: #00f0ff; padding: 6px 12px; font-family: inherit; font-size: 13px; outline: none;
+        }
+        .input-bar button {
+            background: rgba(0, 240, 255, 0.2); border: 1px solid #00f0ff; color: #00f0ff;
+            padding: 6px 16px; cursor: pointer; font-family: inherit; font-size: 12px; font-weight: bold;
+        }
+        .input-bar button:hover { background: rgba(0, 240, 255, 0.4); }
+        .speech-box { font-size: 12px; color: #ffd700; margin-top: 4px; font-style: italic; }
+    </style>
 </head>
 <body>
-  <div class="bg-overlay"></div>
-  
-  <div class="hud-container">
-    <div class="hud-card header-card">
-      <div class="header-title">JARVIS SYSTEM CONSOLE // HOLOGRAPHIC THREE.JS MATRIX</div>
-      <div id="statusText" style="color: #00f0ff; font-weight: bold;">STANDBY MODE</div>
-      <div id="clockText">00:00:00</div>
-    </div>
+    <div id="canvas-container"></div>
+    <div class="jarvis-core-label" id="core-text">J.A.R.V.I.S</div>
 
-    <div class="hud-card">
-      <div class="panel-title">System Telemetry</div>
-      <div class="metric-row"><span>CPU LOAD</span><span id="cpuVal">15%</span></div>
-      <div class="bar-container"><div id="cpuBar" class="bar-fill" style="width: 15%;"></div></div>
-
-      <div class="metric-row"><span>RAM USAGE</span><span id="ramVal">42%</span></div>
-      <div class="bar-container"><div id="ramBar" class="bar-fill" style="width: 42%;"></div></div>
-
-      <div class="panel-title" style="margin-top: 15px;">Active Subsystems</div>
-      <div class="metric-row"><span>3D_HOLO_CORE</span><span style="color:#e040fb;">ONLINE</span></div>
-      <div class="metric-row"><span>GESTURE_CONTROL</span><span style="color:#00e676;">ONLINE</span></div>
-      <div class="metric-row"><span>SYS_CONTROLS</span><span style="color:#00e676;">READY</span></div>
-    </div>
-
-    <!-- 3D Holographic Arc Reactor Container -->
-    <div class="hud-card center-hud">
-      <div id="threeCanvasContainer"></div>
-    </div>
-
-    <div class="hud-card">
-      <div class="panel-title">Radar Telemetry</div>
-      <canvas id="radarCanvas" width="230" height="100" style="margin-bottom: 8px;"></canvas>
-      
-      <div class="panel-title">Audio Spectrum</div>
-      <canvas id="waveCanvas" width="230" height="45"></canvas>
-    </div>
-
-    <div class="bottom-section">
-      <div class="hud-card thinking-card">
-        <div class="thinking-title">🧠 NEURAL REASONING & THOUGHT MATRIX</div>
-        <div class="thinking-content" id="thinkingBox">
-          <div>[STANDBY] Waiting for user prompt or gesture trigger...</div>
+    <div class="ui-layer">
+        <!-- HEADER -->
+        <div class="hud-panel header">
+            <div class="title">STARK INDUSTRIES // OS v1.3.0</div>
+            <div class="header-right">
+                <div class="time-display">
+                    <div id="hud-clock">00:00:00</div>
+                    <div id="hud-date" style="font-size: 11px; opacity: 0.8;">AUG 07, 2026</div>
+                </div>
+                <div id="status" class="status-badge">INITIALIZING...</div>
+            </div>
         </div>
-      </div>
 
-      <div class="hud-card terminal-card">
-        <div class="log-container" id="terminalLog">
-          <div class="log-entry">[SYSTEM] Holographic 3D interface initialized...</div>
-          <div class="log-entry">[SYSTEM] Say 'Hey Jarvis' or type a command below...</div>
+        <!-- LEFT SIDE -->
+        <div class="side-stack">
+            <div class="hud-panel">
+                <div class="panel-title">THOUGHT MATRIX</div>
+                <div id="thinking" style="font-size: 12px; color: #a0f0ff; line-height: 1.4;">Core initialized. Standing by...</div>
+            </div>
+            <div class="hud-panel">
+                <div class="panel-title">SPEECH RECOGNITION</div>
+                <div id="speech-transcript" class="speech-box">Listening inactive...</div>
+            </div>
         </div>
-        <div class="input-box-container">
-          <input type="text" id="cmdInput" class="hud-input" placeholder="Type a command or speak..." onkeypress="handleKeyPress(event)">
-          <button class="hud-btn" onclick="submitCommand()">SEND</button>
+
+        <div></div>
+
+        <!-- RIGHT SIDE -->
+        <div class="side-stack">
+            <div class="hud-panel">
+                <div class="panel-title">SYSTEM METRICS</div>
+                <div style="font-size: 12px; margin-bottom: 4px;">CPU USAGE: <span id="cpu">0%</span></div>
+                <div style="font-size: 12px;">RAM USAGE: <span id="ram">0%</span></div>
+            </div>
+            <div class="hud-panel">
+                <div class="panel-title">ACTIVE PROCESSES</div>
+                <div id="process-list" style="font-size: 11px; color: #80e5ff; line-height: 1.5;">
+                    <div>• python.exe [JARVIS Core]</div>
+                    <div>• EdgeChromium [HUD View]</div>
+                    <div>• Ollama [Llama3.2 Neural]</div>
+                </div>
+            </div>
         </div>
-      </div>
+
+        <!-- BOTTOM LOGS & COMMAND INPUT BAR -->
+        <div class="hud-panel logs-panel">
+            <div class="log-entries" id="logs">
+                <div class="log-entry">[SYSTEM] Arc Reactor particle core initialized...</div>
+            </div>
+            <div class="input-bar">
+                <input type="text" id="cmd-input" placeholder="Type command or query directly..." onkeypress="handleKeyPress(event)">
+                <button onclick="submitCommand()">SEND</button>
+            </div>
+        </div>
     </div>
-  </div>
 
-  <script>
-    let currentColorHex = 0x00f0ff;
-    let targetScale = 1.0;
-    let currentScale = 1.0;
+    <script>
+        // --- Realtime Clock ---
+        function updateClock() {
+            const now = new Date();
+            document.getElementById('hud-clock').innerText = now.toLocaleTimeString();
+            document.getElementById('hud-date').innerText = now.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }).toUpperCase();
+        }
+        setInterval(updateClock, 1000);
+        updateClock();
 
-    setInterval(() => {
-      document.getElementById('clockText').innerText = new Date().toLocaleTimeString();
-    }, 1000);
+        // --- 3D Scene Setups ---
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.z = 7.5;
 
-    window.updateArcScale = function(scale) {
-      targetScale = scale;
-    };
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        container.appendChild(renderer.domElement);
 
-    // ==========================================
-    // 🌌 THREE.JS HOLOGRAPHIC 3D ARC REACTOR
-    // ==========================================
-    const container = document.getElementById('threeCanvasContainer');
-    const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 1000);
-    camera.position.z = 18;
+        // Group 1: Inner Rings & Core (Expands/Shrinks via hand proximity)
+        const innerRingGroup = new THREE.Group();
+        scene.add(innerRingGroup);
 
-    const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
-    renderer.setSize(260, 260);
-    container.appendChild(renderer.domElement);
+        // Group 2: Surrounding Particles (Moves X, Y with hand placement)
+        const particleSwarmGroup = new THREE.Group();
+        scene.add(particleSwarmGroup);
 
-    // Group to hold reactor parts
-    const reactorGroup = new THREE.Group();
-    scene.add(reactorGroup);
+        // 1. Concentric HUD Reticle Rings
+        const r1Geo = new THREE.TorusGeometry(1.2, 0.02, 16, 100);
+        const r1Mat = new THREE.MeshBasicMaterial({ color: 0x00f0ff, wireframe: true });
+        const ring1 = new THREE.Mesh(r1Geo, r1Mat);
+        innerRingGroup.add(ring1);
 
-    // Inner Core Orb
-    const coreGeo = new THREE.SphereGeometry(2.5, 32, 32);
-    const coreMat = new THREE.MeshBasicMaterial({ color: currentColorHex, wireframe: true });
-    const coreMesh = new THREE.Mesh(coreGeo, coreMat);
-    reactorGroup.add(coreMesh);
+        const r2Geo = new THREE.TorusGeometry(1.6, 0.03, 16, 80);
+        const r2Mat = new THREE.MeshBasicMaterial({ color: 0x00a8ff, wireframe: true });
+        const ring2 = new THREE.Mesh(r2Geo, r2Mat);
+        innerRingGroup.add(ring2);
 
-    // Particle Rings
-    const ring1Geo = new THREE.TorusGeometry(5, 0.08, 16, 100);
-    const ring1Mat = new THREE.MeshBasicMaterial({ color: currentColorHex, wireframe: true });
-    const ring1Mesh = new THREE.Mesh(ring1Geo, ring1Mat);
-    reactorGroup.add(ring1Mesh);
+        const r3Geo = new THREE.TorusGeometry(2.1, 0.015, 16, 100);
+        const r3Mat = new THREE.MeshBasicMaterial({ color: 0x0055ff, wireframe: true });
+        const ring3 = new THREE.Mesh(r3Geo, r3Mat);
+        innerRingGroup.add(ring3);
 
-    const ring2Geo = new THREE.TorusGeometry(7, 0.05, 16, 100);
-    const ring2Mat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.6 });
-    const ring2Mesh = new THREE.Mesh(ring2Geo, ring2Mat);
-    ring2Mesh.rotation.x = Math.PI / 3;
-    reactorGroup.add(ring2Mesh);
+        // 2. Dense Surrounding Particle Field (2000 particles)
+        const particleCount = 2000;
+        const particleGeo = new THREE.BufferGeometry();
+        const posArray = new Float32Array(particleCount * 3);
 
-    // Outer Particle Field
-    const particlesCount = 250;
-    const posArray = new Float32Array(particlesCount * 3);
-    for(let i=0; i < particlesCount*3; i+=3) {
-      const angle = Math.random() * Math.PI * 2;
-      const radius = 8 + Math.random() * 3;
-      posArray[i] = Math.cos(angle) * radius;
-      posArray[i+1] = Math.sin(angle) * radius;
-      posArray[i+2] = (Math.random() - 0.5) * 4;
-    }
-    const particlesGeo = new THREE.BufferGeometry();
-    particlesGeo.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
-    const particlesMat = new THREE.PointsMaterial({ size: 0.15, color: currentColorHex });
-    const particleSystem = new THREE.Points(particlesGeo, particlesMat);
-    reactorGroup.add(particleSystem);
+        for (let i = 0; i < particleCount * 3; i += 3) {
+            const u = Math.random();
+            const v = Math.random();
+            const theta = u * 2.0 * Math.PI;
+            const phi = Math.acos(2.0 * v - 1.0);
+            const r = 1.9 + Math.random() * 2.2;
 
-    function animateThree() {
-      requestAnimationFrame(animateThree);
+            posArray[i] = r * Math.sin(phi) * Math.cos(theta);
+            posArray[i + 1] = r * Math.sin(phi) * Math.sin(theta);
+            posArray[i + 2] = r * Math.cos(phi);
+        }
 
-      // Interpolate smooth scaling from hand gesture
-      currentScale += (targetScale - currentScale) * 0.1;
-      reactorGroup.scale.set(currentScale, currentScale, currentScale);
+        particleGeo.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
+        const particleMat = new THREE.PointsMaterial({ size: 0.022, color: 0x00ffff, transparent: true, opacity: 0.85 });
+        const particleSwarm = new THREE.Points(particleGeo, particleMat);
+        particleSwarmGroup.add(particleSwarm);
 
-      // Continuous 3D rotation
-      reactorGroup.rotation.y += 0.015;
-      ring1Mesh.rotation.x += 0.02;
-      ring2Mesh.rotation.y -= 0.025;
-      particleSystem.rotation.z += 0.005;
+        // Interpolation Targets
+        let targetX = 0, targetY = 0, targetScale = 1.0;
 
-      renderer.render(scene, camera);
-    }
-    animateThree();
+        window.updateArcTransform = function(x, y, scale) {
+            targetX = x * 3.0;   // X translation for particles
+            targetY = y * 2.0;   // Y translation for particles
+            targetScale = scale; // Scale ONLY for inner ring target core
+        };
 
-    // Radar & Audio Wave canvas setups
-    const rCanvas = document.getElementById('radarCanvas');
-    const rCtx = rCanvas.getContext('2d');
-    let rAngle = 0;
+        function animate() {
+            requestAnimationFrame(animate);
 
-    function drawRadar() {
-      rCtx.clearRect(0, 0, 230, 100);
-      const cx = 115, cy = 50;
+            // Ring Rotations
+            ring1.rotation.z += 0.01;
+            ring2.rotation.z -= 0.015;
+            ring3.rotation.z += 0.005;
+            particleSwarm.rotation.y += 0.004;
 
-      rCtx.strokeStyle = 'rgba(0, 240, 255, 0.3)';
-      rCtx.lineWidth = 1;
-      rCtx.beginPath(); rCtx.arc(cx, cy, 40, 0, Math.PI * 2); rCtx.stroke();
-      rCtx.beginPath(); rCtx.arc(cx, cy, 20, 0, Math.PI * 2); rCtx.stroke();
+            // Particles translate X, Y with hand placement
+            particleSwarmGroup.position.x += (targetX - particleSwarmGroup.position.x) * 0.1;
+            particleSwarmGroup.position.y += (targetY - particleSwarmGroup.position.y) * 0.1;
 
-      rCtx.save();
-      rCtx.translate(cx, cy);
-      rCtx.rotate(rAngle);
-      rCtx.strokeStyle = '#00f0ff';
-      rCtx.lineWidth = 2;
-      rCtx.beginPath(); rCtx.moveTo(0,0); rCtx.lineTo(40, 0); rCtx.stroke();
-      rCtx.restore();
+            // Inner rings scale up/down with hand distance
+            const currentScale = innerRingGroup.scale.x;
+            const lerpedScale = currentScale + (targetScale - currentScale) * 0.1;
+            innerRingGroup.scale.set(lerpedScale, lerpedScale, lerpedScale);
 
-      rAngle += 0.04;
-      requestAnimationFrame(drawRadar);
-    }
-    drawRadar();
+            renderer.render(scene, camera);
+        }
+        animate();
 
-    const wCanvas = document.getElementById('waveCanvas');
-    const wCtx = wCanvas.getContext('2d');
-    let step = 0;
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
 
-    function drawWave() {
-      wCtx.clearRect(0, 0, 230, 45);
-      wCtx.fillStyle = '#00f0ff';
+        // --- HUD Bridge Methods ---
+        function updateStatus(text, color) {
+            const el = document.getElementById('status');
+            if (el) { el.innerText = text; el.style.borderColor = color; el.style.color = color; }
+        }
+        function addLog(text) {
+            const el = document.getElementById('logs');
+            if (el) {
+                const div = document.createElement('div');
+                div.className = 'log-entry';
+                div.innerText = '[' + new Date().toLocaleTimeString() + '] ' + text;
+                el.appendChild(div);
+                el.scrollTop = el.scrollHeight;
+            }
+        }
+        function updateThinking(data) {
+            const el = document.getElementById('thinking');
+            if (el) el.innerText = data.step || data.prompt;
+            const transcript = document.getElementById('speech-transcript');
+            if (transcript && data.prompt) {
+                transcript.innerText = '"' + data.prompt + '"';
+            }
+        }
+        function updateStats(cpu, ram) {
+            const c = document.getElementById('cpu');
+            const r = document.getElementById('ram');
+            if (c) c.innerText = cpu + '%';
+            if (r) r.innerText = ram + '%';
+        }
 
-      for (let i = 0; i < 25; i++) {
-        let height = Math.sin(step + i * 0.4) * 15 + 18;
-        wCtx.fillRect(i * 9 + 4, 22 - height / 2, 4, height);
-      }
-      step += 0.1;
-      requestAnimationFrame(drawWave);
-    }
-    drawWave();
-
-    // Python-Callable UI Methods
-    window.updateStatus = function(status, color) {
-      const el = document.getElementById('statusText');
-      el.innerText = status.toUpperCase();
-      el.style.color = color;
-
-      // Convert hex string color to Three.js hex
-      if(color === '#00e676') currentColorHex = 0x00e676;
-      else if(color === '#ffc107') currentColorHex = 0xffc107;
-      else if(color === '#9c27b0') currentColorHex = 0xe040fb;
-      else currentColorHex = 0x00f0ff;
-
-      coreMat.color.setHex(currentColorHex);
-      ring1Mat.color.setHex(currentColorHex);
-      particlesMat.color.setHex(currentColorHex);
-    };
-
-    window.addLog = function(msg) {
-      const box = document.getElementById('terminalLog');
-      const entry = document.createElement('div');
-      entry.className = 'log-entry';
-      entry.innerText = `[${new Date().toLocaleTimeString()}] ${msg}`;
-      box.appendChild(entry);
-      box.scrollTop = box.scrollHeight;
-    };
-
-    window.updateThinking = function(thoughtText) {
-      const box = document.getElementById('thinkingBox');
-      box.innerHTML = `<div>> USER PROMPT: "${thoughtText.prompt || thoughtText}"</div>`;
-      if (thoughtText.step) {
-        box.innerHTML += `<div style="color: #e040fb; margin-top: 4px;">> REASONING: ${thoughtText.step}</div>`;
-      }
-      if (thoughtText.action) {
-        box.innerHTML += `<div style="color: #00e676; margin-top: 4px;">> EXECUTING TOOL: ${thoughtText.action}</div>`;
-      }
-      box.scrollTop = box.scrollHeight;
-    };
-
-    window.updateStats = function(cpu, ram) {
-      document.getElementById('cpuVal').innerText = cpu + '%';
-      document.getElementById('cpuBar').style.width = cpu + '%';
-      document.getElementById('ramVal').innerText = ram + '%';
-      document.getElementById('ramBar').style.width = ram + '%';
-    };
-
-    function handleKeyPress(e) {
-      if (e.key === 'Enter') submitCommand();
-    }
-
-    function submitCommand() {
-      const input = document.getElementById('cmdInput');
-      const text = input.value.trim();
-      if (!text) return;
-
-      window.addLog(`User Command: ${text}`);
-      if (window.pywebview && window.pywebview.api) {
-        window.pywebview.api.send_command(text);
-      }
-      input.value = '';
-    }
-  </script>
+        function submitCommand() {
+            const input = document.getElementById('cmd-input');
+            const text = input.value.trim();
+            if (text && window.pywebview && window.pywebview.api) {
+                window.pywebview.api.send_command(text);
+                addLog('User Typed: ' + text);
+                input.value = '';
+            }
+        }
+        function handleKeyPress(e) {
+            if (e.key === 'Enter') submitCommand();
+        }
+    </script>
 </body>
 </html>
